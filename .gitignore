@@ -1,0 +1,7 @@
+VolumeMixer.exe
+*.pdb
+*.zip
+release/
+.vs/
+*.user
+*.suo
