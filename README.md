@@ -1,6 +1,6 @@
 # VolumeMixer
 
-EarTrumpet-style Windows tray volume mixer. Single-file `.exe`, no installer
+Lightweight Windows tray volume mixer. Single-file `.exe`, no installer
 required, under 100 KB. Works on 64-bit Windows 10 1803+ and Windows 11.
 
 Current release: **1.0.0**
@@ -80,9 +80,9 @@ needed for trying it out.
 - Pick any other device to route just that app there
 - Right-click again to close (returns to original list position)
 
-This uses `Windows.Media.Internal.AudioPolicyConfig` — the same undocumented
-WinRT API that EarTrumpet uses. It's stable on Win10 1803+ and Win11 but
-isn't formally part of the public SDK.
+This uses the undocumented `Windows.Media.Internal.AudioPolicyConfig` WinRT
+API. It's stable on Win10 1803+ and Win11 but isn't formally part of the
+public SDK.
 
 ## Files
 

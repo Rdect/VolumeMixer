@@ -233,7 +233,7 @@ namespace VolumeMixer
 
     // ============================================================
     // Per-app output device routing via WinRT IAudioPolicyConfig
-    // (undocumented, used by EarTrumpet; works on Win10 1803+ / Win11)
+    // (undocumented Windows API; works on Win10 1803+ / Win11)
     // ============================================================
     internal static class AudioPolicyConfig
     {
