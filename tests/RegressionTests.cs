@@ -84,6 +84,21 @@ internal static class RegressionTests
                 Check(Descendants(form).Any(c => c is Label && c.Text == Strings.VolumeMixer), "Settings controls remained in mixer view");
             }
         });
+        Run("Clicking focused settings and back buttons keeps the popup open", delegate {
+            using (var form = OpenForm()) {
+                Call(form, "Render");
+                for (int i = 0; i < 4; i++) {
+                    var button = Descendants(form).OfType<IconHeaderButton>().Single();
+                    button.Focus();
+                    Call(button, "OnClick", EventArgs.Empty);
+                    Check(form.Visible && !DismissalPending(form), "Navigation scheduled popup dismissal");
+                    string expectedTitle = i % 2 == 0 ? Strings.SoundSettings : Strings.VolumeMixer;
+                    Check(Descendants(form).Any(c => c is Label && c.Text == expectedTitle), "Navigation did not render the requested page");
+                    Pump(350);
+                    Check(form.Visible, "Popup closed during page navigation");
+                }
+            }
+        });
         Run("Master appearing without app changes creates its row", delegate {
             using (var form = OpenForm()) {
                 Call(form, "Render");

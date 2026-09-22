@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed the settings/back buttons closing the popup when their focused controls
+  were disposed during page navigation.
 - Fixed the x64 native property buffer size, preventing memory corruption when
   reading audio device properties.
 - Fixed popup focus loss, tray-click dismissal races, settings-to-mixer reopening,

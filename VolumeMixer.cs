@@ -3369,6 +3369,14 @@ namespace VolumeMixer
 
         private void Render()
         {
+            // A focused child must lose focus before it is detached/disposed.
+            // Destroying the focused navigation button deactivates the popup and
+            // incorrectly schedules outside-click dismissal during page changes.
+            if (_content.ContainsFocus)
+            {
+                ActiveControl = null;
+                Focus();
+            }
             StopDeviceAnimation();
             _deviceCardsById.Clear();
             _rowSyncs.Clear();
