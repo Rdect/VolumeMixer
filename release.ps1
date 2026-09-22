@@ -19,7 +19,7 @@ if (-not $releaseRoot.StartsWith($rootPrefix, [System.StringComparison]::Ordinal
     throw 'Resolved release paths are outside the project directory.'
 }
 
-& (Join-Path $root 'build.ps1')
+& (Join-Path $root 'build-installer.ps1')
 
 if (Test-Path -LiteralPath $stage) {
     Remove-Item -LiteralPath $stage -Recurse -Force
@@ -29,13 +29,13 @@ if (Test-Path -LiteralPath $zip) {
 }
 
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
-$packageFiles = @('VolumeMixer.exe', 'install.ps1', 'README.md', 'CHANGELOG.md')
+$packageFiles = @('VolumeMixerSetup.exe', 'README.md', 'CHANGELOG.md')
 foreach ($file in $packageFiles) {
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination $stage
 }
 
-$exeHash = (Get-FileHash -LiteralPath (Join-Path $stage 'VolumeMixer.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
-Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Encoding ASCII -Value "$exeHash  VolumeMixer.exe"
+$setupHash = (Get-FileHash -LiteralPath (Join-Path $stage 'VolumeMixerSetup.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Encoding ASCII -Value "$setupHash  VolumeMixerSetup.exe"
 
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
 $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()

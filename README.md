@@ -27,22 +27,19 @@ Current release: **1.0.0**
 ## Quick start
 
 ```powershell
-# 1. Build the exe (uses Windows' built-in .NET 4.x C# compiler)
-.\build.ps1
+# Build a single installer EXE (uses Windows' built-in .NET 4.x compiler)
+.\build-installer.ps1
 
-# 2. Install to %LOCALAPPDATA%\VolumeMixer\ + enable auto-start + launch
-.\install.ps1
-
-# Variations:
-.\install.ps1 -NoAutoStart    # install + launch, no startup entry
-.\install.ps1 -Uninstall      # stop, remove auto-start, delete install dir
+# Run VolumeMixerSetup.exe. It installs to %LOCALAPPDATA%\VolumeMixer\,
+# enables auto-start, registers an uninstaller, and launches the app.
 
 # Build a versioned release ZIP with SHA-256 checksums
 .\release.ps1
 ```
 
-You can also just double-click `VolumeMixer.exe` from anywhere — no install
-needed for trying it out.
+`VolumeMixerSetup.exe` does not require administrator permissions. The app is
+installed under the current user's local C: drive profile, which keeps startup
+reliable without requiring a UAC prompt.
 
 ## Tray icon controls
 
@@ -89,15 +86,22 @@ public SDK.
 | File              | Purpose                                                |
 |-------------------|--------------------------------------------------------|
 | `VolumeMixer.cs`  | Single-file source (~4000 lines, all C#)               |
-| `build.ps1`       | Compile to `VolumeMixer.exe` via Framework `csc.exe`   |
-| `install.ps1`     | Install to LocalAppData + per-user auto-start          |
-| `release.ps1`     | Build a versioned x64 ZIP with checksums                |
+| `build.ps1`       | Compile `VolumeMixer.exe` via Framework `csc.exe`      |
+| `build-installer.ps1` | Build self-contained `VolumeMixerSetup.exe`        |
+| `Installer.cs`    | Per-user installer, auto-start, and uninstaller        |
+| `install.ps1`     | Legacy scripted install option                          |
+| `release.ps1`     | Build a versioned installer ZIP with checksums          |
 | `app.ico`         | Embedded application icon (Windows speaker glyph)      |
-| `VolumeMixer.exe` | Build output                                           |
+| `VolumeMixerSetup.exe` | Installer build output                             |
 
 ## Diagnostics
 
 Crashes are logged to `%TEMP%\VolumeMixer.log`.
+
+Run `.\test.ps1` for the Windows regression suite. It uses the built-in .NET
+Framework compiler, exercises real WinForms timers/controls and native property
+buffer handling, and reads the current audio state without changing volume or
+device preferences. A few tests briefly show popup windows. No test SDK is needed.
 
 Release builds print a SHA-256 checksum after compilation. The executable is
 currently unsigned, so Windows may show an unknown-publisher warning on first run.

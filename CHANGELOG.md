@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Fixed the x64 native property buffer size, preventing memory corruption when
+  reading audio device properties.
+- Fixed popup focus loss, tray-click dismissal races, settings-to-mixer reopening,
+  and stale background preload results. Startup no longer activates a hidden window.
+- Restored missing master controls after audio-device loss/recovery and refresh
+  open mixer sessions/output state without depending on creation notifications.
+- Fixed sliders continuing to drag after losing capture and live polling moving
+  the thumb during a drag. Added Windows regression tests (`.\test.ps1`).
+- Added a self-contained `VolumeMixerSetup.exe` installer.
+- Installer deploys to the current user's LocalAppData directory, enables
+  per-user auto-start, launches the app, and registers an uninstaller.
+- Synced auto-start with Windows Startup Apps / Task Manager so Windows-side
+  enable and disable choices are reflected by the tray menu.
+
 ## 1.0.0 - 2026-07-14
 
 - Added a tray-based master and per-application volume mixer.

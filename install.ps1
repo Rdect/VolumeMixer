@@ -31,6 +31,7 @@ $startupLnk   = Join-Path $startupDir 'VolumeMixer.lnk'
 
 # Per-user auto-start registry entry.
 $runKey         = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+$startupApprovedRunKey = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
 $runValueName   = 'VolumeMixer'
 
 function Stop-Running {
@@ -54,6 +55,10 @@ function Set-AutoStart([bool]$enable) {
         }
         $command = '"' + $installedExe + '" --startup'
         Set-ItemProperty -Path $runKey -Name $runValueName -Value $command -Type String
+        if (-not (Test-Path $startupApprovedRunKey)) {
+            New-Item -Path $startupApprovedRunKey -Force | Out-Null
+        }
+        New-ItemProperty -Path $startupApprovedRunKey -Name $runValueName -PropertyType Binary -Value ([byte[]](2, 0, 0, 0)) -Force | Out-Null
 
         if (Test-Path $startupLnk) {
             Remove-Item $startupLnk -Force
@@ -67,6 +72,7 @@ function Set-AutoStart([bool]$enable) {
     }
     if (-not $enable) {
         Remove-AutoStartRunKey
+        Remove-ItemProperty -Path $startupApprovedRunKey -Name $runValueName -ErrorAction SilentlyContinue
     }
 }
 

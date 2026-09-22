@@ -31,7 +31,9 @@ namespace VolumeMixer
         public uint pid;
     }
 
-    [StructLayout(LayoutKind.Explicit)]
+    // The native union includes a counted pointer (16 bytes on x64), even
+    // when we only read strings/integers. PropVariantClear writes all 24 bytes.
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
     internal struct PROPVARIANT
     {
         [FieldOffset(0)] public ushort vt;
@@ -1540,6 +1542,7 @@ namespace VolumeMixer
 
         public int Minimum { get { return _min; } set { _min = value; Invalidate(); } }
         public int Maximum { get { return _max; } set { _max = value; Invalidate(); } }
+        public bool IsDragging { get { return _dragging; } }
 
         public int Value
         {
@@ -1640,6 +1643,12 @@ namespace VolumeMixer
             base.OnMouseUp(e);
             _dragging = false;
             Capture = false;
+        }
+
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            if (!Capture) _dragging = false;
         }
 
         private void SetFromX(int x)
@@ -1942,6 +1951,7 @@ namespace VolumeMixer
         private int _savedScrollY = -1;
         private readonly List<DeviceOptionButton> _deviceButtons = new List<DeviceOptionButton>();
         private readonly MouseEventHandler _rightClickHandler;
+        public bool IsDragging { get { return _slider.IsDragging; } }
 
         public AppRow(string name, IconTile tile, Color brandColor, AppBrand brand,
                       float volume, bool muted,
@@ -2290,6 +2300,7 @@ namespace VolumeMixer
         // other apps, etc.) reflect in the UI without firing onChange callbacks.
         public void UpdateExternalState(float volume, bool muted)
         {
+            if (_slider.IsDragging) return;
             int pct = (int)Math.Round(volume * 100);
             _slider.SetValueSilent(pct);
             if (_slider.Faded != muted)
@@ -2567,6 +2578,8 @@ namespace VolumeMixer
         private System.Windows.Forms.Timer _syncTimer;
         private int _audioReloadSeq;
         private int _deviceReloadSeq;
+        private int _audioReloadPending;
+        private int _syncTicks;
 
         public MixerForm()
         {
@@ -2678,6 +2691,11 @@ namespace VolumeMixer
         private void ApplySessionReload(List<AudioSession> freshSessions)
         {
             if (freshSessions == null) return;
+            if (IsDisposed || _isClosing || _rowSyncs.Any(x => x.Row.IsDragging))
+            {
+                AudioEngine.ReleaseSessions(freshSessions);
+                return;
+            }
             var oldPids = new HashSet<uint>(_sessions.Select(x => x.ProcessId));
             bool listChanged = _sessions.Count != freshSessions.Count
                 || !oldPids.SetEquals(freshSessions.Select(x => x.ProcessId));
@@ -2730,6 +2748,7 @@ namespace VolumeMixer
         // Pre-load audio data on a background thread so the popup is instant on first show.
         public void PreloadAsync()
         {
+            int seq = Interlocked.Increment(ref _audioReloadSeq);
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
                 AudioMaster m = null;
@@ -2743,9 +2762,22 @@ namespace VolumeMixer
                     if (IsHandleCreated && !IsDisposed)
                         BeginInvoke((Action)(() =>
                         {
+                            if (IsDisposed || seq != _audioReloadSeq || _preloaded)
+                            {
+                                AudioEngine.ReleaseMaster(m);
+                                AudioEngine.ReleaseSessions(s);
+                                return;
+                            }
+                            _devices = d ?? new List<DeviceInfo>();
+                            if (Visible)
+                            {
+                                ApplyAudioReload(m, s);
+                                return;
+                            }
+                            AudioEngine.ReleaseMaster(_master);
+                            AudioEngine.ReleaseSessions(_sessions);
                             _master = m;
                             _sessions = s ?? new List<AudioSession>();
-                            _devices = d ?? new List<DeviceInfo>();
                             _preloaded = true;
                             WarmUpRender();
                         }));
@@ -2763,10 +2795,8 @@ namespace VolumeMixer
             });
         }
 
-        // Briefly Show the form OFF-SCREEN once preload is done, so the OS does its
-        // first paint + JIT compiles every OnPaint method + DWM/composition path
-        // gets primed. The first actual user-triggered Show then has nothing left to
-        // warm up and feels instant.
+        // Build cached controls without showing or activating the window. Showing
+        // off-screen still steals focus and DoEvents can re-enter tray handlers.
         private bool _warmingUp;
 
         private void WarmUpRender()
@@ -2776,14 +2806,6 @@ namespace VolumeMixer
             try
             {
                 Render();
-                var savedLoc = Location;
-                // Position FAR off-screen on every conceivable multi-monitor layout —
-                // user never sees the warmup show.
-                Location = new Point(-32000, -32000);
-                Show();
-                Application.DoEvents(); // let WM_PAINT messages run through
-                base.Hide();
-                Location = savedLoc;
             }
             catch { }
             finally { _warmingUp = false; }
@@ -2853,6 +2875,7 @@ namespace VolumeMixer
         {
             CancelDelayedClose();
             bool alreadyVisible = Visible && !_warmingUp;
+            bool viewChanged = _view != View.Mixer;
             _view = View.Mixer;
             _lastTrayRect = trayRect;
 
@@ -2869,6 +2892,7 @@ namespace VolumeMixer
                 }
                 Render();
             }
+            else if (viewChanged) Render();
 
             // Position slightly below the final spot so we can slide up into place.
             Point finalPos = CalculatePopupLocation(_lastTrayRect);
@@ -2913,6 +2937,13 @@ namespace VolumeMixer
         {
             if (!Visible || _warmingUp || _isClosing) return;
             if (Bounds.Contains(new Point(pt.X, pt.Y))) return;
+            // The same mouse press also reaches NotifyIcon.MouseDown. Its toggle
+            // owns tray clicks, regardless of which queued callback arrives first.
+            if (_lastTrayRect.HasValue)
+            {
+                var tray = _lastTrayRect.Value;
+                if (pt.X >= tray.Left && pt.X < tray.Right && pt.Y >= tray.Top && pt.Y < tray.Bottom) return;
+            }
             ScheduleDelayedClose();
         }
 
@@ -2977,6 +3008,7 @@ namespace VolumeMixer
 
         private void ReloadAudioInBackground()
         {
+            if (Interlocked.CompareExchange(ref _audioReloadPending, 1, 0) != 0) return;
             int seq = Interlocked.Increment(ref _audioReloadSeq);
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
@@ -3008,6 +3040,7 @@ namespace VolumeMixer
                     AudioEngine.ReleaseMaster(m);
                     AudioEngine.ReleaseSessions(s);
                 }
+                finally { Interlocked.Exchange(ref _audioReloadPending, 0); }
             });
         }
 
@@ -3018,12 +3051,14 @@ namespace VolumeMixer
         // same apps playing has ZERO re-render flicker.
         private void ApplyAudioReload(AudioMaster m, List<AudioSession> s)
         {
-            if (_view != View.Mixer || !Visible)
+            if (IsDisposed || _view != View.Mixer || !Visible || _isClosing
+                || _rowSyncs.Any(x => x.Row.IsDragging))
             {
                 AudioEngine.ReleaseMaster(m);
                 AudioEngine.ReleaseSessions(s);
                 return;
             }
+            _preloaded = true;
             if (s == null) s = new List<AudioSession>();
 
             bool listChanged;
@@ -3041,6 +3076,9 @@ namespace VolumeMixer
             List<AudioSession> oldSessions = _sessions;
             _master = m;
 
+            // A disconnected cached endpoint may have been omitted by RenderMixer
+            // despite a non-null wrapper. Recovery must restore that missing row.
+            bool masterChanged = _rowSyncs.Any(x => x.Master != null) != (m != null);
             if (listChanged)
             {
                 _sessions = s;
@@ -3069,10 +3107,10 @@ namespace VolumeMixer
                 }
             }
 
-            if (listChanged)
+            if (listChanged || masterChanged)
             {
                 Render();
-                AudioEngine.ReleaseSessions(oldSessions);
+                if (listChanged) AudioEngine.ReleaseSessions(oldSessions);
             }
             AudioEngine.ReleaseMaster(oldMaster);
             // else: nothing to repaint. SyncFromSystem keeps values fresh.
@@ -3134,6 +3172,12 @@ namespace VolumeMixer
             base.OnDeactivate(e);
             if (_warmingUp) return; // ignore the spurious deactivate during off-screen warm-up
             ScheduleDelayedClose();
+        }
+
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            CancelDelayedClose();
         }
 
         private void ScheduleDelayedClose()
@@ -3207,6 +3251,7 @@ namespace VolumeMixer
         private void StartSyncTimer()
         {
             if (_syncTimer != null) return;
+            _syncTicks = 0;
             _syncTimer = new System.Windows.Forms.Timer { Interval = 250 };
             _syncTimer.Tick += (s, e) => SyncFromSystem();
             _syncTimer.Start();
@@ -3242,6 +3287,16 @@ namespace VolumeMixer
                     rs.Row.UpdateExternalState(v, muted);
                 }
                 catch { }
+            }
+
+            // Creation notifications do not cover expired sessions or default-device
+            // changes, and may be unavailable on some Windows configurations.
+            // Reconcile while open; never enumerate on the UI thread or during a drag.
+            if (Visible && _view == View.Mixer && !_isOpening && !_isClosing
+                && !_rowSyncs.Any(x => x.Row.IsDragging) && ++_syncTicks >= 8)
+            {
+                _syncTicks = 0;
+                ReloadAudioInBackground();
             }
         }
 
@@ -3435,12 +3490,12 @@ namespace VolumeMixer
             }
 
             // 3) Master row
-            if (_master != null)
+            float masterVolume;
+            bool masterMuted;
+            if (_master != null && _master.TryGetVolume(out masterVolume) && _master.TryGetMute(out masterMuted))
             {
-                float v = _master.Volume;
-                bool m = _master.Mute;
                 var masterTile = new IconTile("🔊", new Font("Segoe UI Symbol", 14f), Theme.AccentBlue);
-                var row = new AppRow(Strings.MainSound, masterTile, Theme.AccentBlue, null, v, m,
+                var row = new AppRow(Strings.MainSound, masterTile, Theme.AccentBlue, null, masterVolume, masterMuted,
                     0, false, null,
                     (val) => { try { _master.Volume = val; } catch { } },
                     (mute) => { try { _master.Mute = mute; } catch { } });
@@ -4075,6 +4130,7 @@ namespace VolumeMixer
         }
 
         private const string AutoStartRunRegPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+        private const string AutoStartApprovalRegPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
         private const string AutoStartRunValueName = "VolumeMixer";
 
         private static bool IsAutoStartEnabled()
@@ -4084,7 +4140,16 @@ namespace VolumeMixer
                 using (var k = Registry.CurrentUser.OpenSubKey(AutoStartRunRegPath))
                 {
                     string command = k == null ? null : k.GetValue(AutoStartRunValueName) as string;
-                    return !string.IsNullOrWhiteSpace(command);
+                    if (string.IsNullOrWhiteSpace(command)) return false;
+                }
+
+                // Task Manager / Settings stores the user's enabled state here.
+                // A stale disabled value previously left the tray menu checked even
+                // though Windows would no longer launch the app at sign-in.
+                using (var k = Registry.CurrentUser.OpenSubKey(AutoStartApprovalRegPath))
+                {
+                    var value = k == null ? null : k.GetValue(AutoStartRunValueName) as byte[];
+                    return value == null || value.Length == 0 || value[0] == 2;
                 }
             }
             catch { return false; }
@@ -4105,10 +4170,18 @@ namespace VolumeMixer
                         {
                             string exe = Application.ExecutablePath;
                             k.SetValue(AutoStartRunValueName, "\"" + exe + "\" --startup", RegistryValueKind.String);
+                            using (var approval = Registry.CurrentUser.CreateSubKey(AutoStartApprovalRegPath))
+                            {
+                                if (approval != null) approval.SetValue(AutoStartRunValueName, new byte[] { 2, 0, 0, 0 }, RegistryValueKind.Binary);
+                            }
                         }
                         else
                         {
                             k.DeleteValue(AutoStartRunValueName, false);
+                            using (var approval = Registry.CurrentUser.OpenSubKey(AutoStartApprovalRegPath, true))
+                            {
+                                if (approval != null) approval.DeleteValue(AutoStartRunValueName, false);
+                            }
                         }
                     }
                 }
