@@ -16,7 +16,6 @@ Current release: **1.0.0**
   Windows sound properties
 - **Per-app output device routing** — right-click any app row to slide open a
   device picker (uses Windows' internal `IAudioPolicyConfig` WinRT API)
-- Mouse-wheel over the tray icon → master volume
 - Mouse-wheel over a slider → per-app volume
 - Live updates: external volume changes (media keys, other apps) reflected
   in the popup in real time
@@ -46,7 +45,6 @@ reliable without requiring a UAC prompt.
 | Action                       | Effect                                    |
 |------------------------------|-------------------------------------------|
 | Left click                   | Toggle mixer popup                        |
-| Mouse wheel (over the icon)  | Master volume ±2 % per notch              |
 | Right click                  | Context menu (Open / Sound Settings / Auto-start / Exit) |
 
 ## Mixer popup

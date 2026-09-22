@@ -19,6 +19,12 @@ internal static class RegressionTests
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        Run("Production binary has no global mouse-hook capability", delegate {
+            Check(typeof(Win32).GetMethod("SetWindowsHookEx", BindingFlags.Static | BindingFlags.Public) == null,
+                "Low-level global mouse hook remains imported");
+            Check(typeof(TrayApp).GetField("_hookId", BindingFlags.Instance | BindingFlags.NonPublic) == null,
+                "Tray application still owns a global mouse hook");
+        });
         Run("Native property clearing stays inside the managed buffer", delegate {
             int size = Marshal.SizeOf(typeof(PROPVARIANT));
             IntPtr buffer = Marshal.AllocHGlobal(size + 16);
@@ -59,20 +65,6 @@ internal static class RegressionTests
                 Call(form, "OnDeactivate", EventArgs.Empty);
                 Call(form, "OnActivated", EventArgs.Empty);
                 Check(!DismissalPending(form), "Popup still has a pending close after regaining focus");
-            }
-        });
-        Run("Tray click is handled by toggle, not outside dismissal", delegate {
-            using (var form = OpenForm()) {
-                Set(form, "_lastTrayRect", new Win32.RECT { Left = 0, Top = 0, Right = 24, Bottom = 24 });
-                form.CloseIfPointOutside(new Win32.POINT { X = 12, Y = 12 });
-                Check(!DismissalPending(form), "Queued tray click scheduled a close");
-            }
-        });
-        Run("Outside click still dismisses popup", delegate {
-            using (var form = OpenForm()) {
-                form.CloseIfPointOutside(new Win32.POINT { X = 0, Y = 0 });
-                Pump(400);
-                Check(!form.Visible, "Outside click did not close popup");
             }
         });
         Run("Reopening settings renders the mixer", delegate {

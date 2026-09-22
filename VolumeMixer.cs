@@ -469,34 +469,6 @@ namespace VolumeMixer
             catch { return false; }
         }
 
-        public bool TryStepVolume(int notches)
-        {
-            if (Endpoint == null || notches == 0) return false;
-            try
-            {
-                uint step;
-                uint stepCount;
-                int hr = Endpoint.GetVolumeStepInfo(out step, out stepCount);
-                int stepsPerNotch = 2;
-                if (hr == 0 && stepCount > 1)
-                    stepsPerNotch = Math.Max(1, (int)Math.Round((stepCount - 1) * 0.02));
-
-                int total = Math.Min(40, Math.Abs(notches) * stepsPerNotch);
-                Guid g = Guid.Empty;
-                for (int i = 0; i < total; i++)
-                {
-                    hr = notches > 0 ? Endpoint.VolumeStepUp(ref g) : Endpoint.VolumeStepDown(ref g);
-                    if (hr != 0) return false;
-                }
-
-                float v;
-                bool muted;
-                if (TryGetVolume(out v) && v > 0.001f && TryGetMute(out muted) && muted)
-                    TrySetMute(false);
-                return true;
-            }
-            catch { return false; }
-        }
     }
 
     internal sealed class DeviceInfo
@@ -561,27 +533,6 @@ namespace VolumeMixer
         public static AudioMaster GetMaster()
         {
             return GetMasterForRole(1 /*eMultimedia*/);
-        }
-
-        public static List<AudioMaster> GetDefaultRoleMasters()
-        {
-            var result = new List<AudioMaster>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            int[] roles = { 1 /*eMultimedia*/, 0 /*eConsole*/, 2 /*eCommunications*/ };
-
-            for (int i = 0; i < roles.Length; i++)
-            {
-                try
-                {
-                    var m = GetMasterForRole(roles[i]);
-                    string key = !string.IsNullOrEmpty(m.DeviceId) ? m.DeviceId : ("role:" + roles[i]);
-                    if (seen.Add(key)) result.Add(m);
-                    else ReleaseCom(m.Endpoint);
-                }
-                catch { }
-            }
-
-            return result;
         }
 
         private static AudioMaster GetMasterForRole(int role)
@@ -1012,31 +963,14 @@ namespace VolumeMixer
         public const int DWMSBT_TRANSIENTWINDOW = 3;
         public const int DWMWCP_ROUND = 2;
         public const int WM_SETREDRAW = 0x000B;
-        public const int WH_MOUSE_LL = 14;
-        public const int WM_MOUSEWHEEL = 0x020A;
-        public const int WM_LBUTTONDOWN = 0x0201;
-        public const int WM_RBUTTONDOWN = 0x0204;
-        public const int WM_MBUTTONDOWN = 0x0207;
         public const int MONITOR_DEFAULTTONEAREST = 2;
         public const uint SWP_NOSIZE = 0x0001;
         public const uint SWP_NOZORDER = 0x0004;
         public const uint SWP_NOACTIVATE = 0x0010;
         public const uint SWP_NOOWNERZORDER = 0x0200;
 
-        public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
-
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT { public int X, Y; }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct MSLLHOOKSTRUCT
-        {
-            public POINT pt;
-            public uint mouseData;
-            public uint flags;
-            public uint time;
-            public IntPtr dwExtraInfo;
-        }
 
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT { public int Left, Top, Right, Bottom; }
@@ -1060,15 +994,6 @@ namespace VolumeMixer
         }
 
         [DllImport("user32.dll")]
-        public static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
-
-        [DllImport("user32.dll")]
-        public static extern bool UnhookWindowsHookEx(IntPtr hhk);
-
-        [DllImport("user32.dll")]
-        public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
-        [DllImport("user32.dll")]
         public static extern IntPtr GetForegroundWindow();
 
         [DllImport("user32.dll")]
@@ -1086,9 +1011,6 @@ namespace VolumeMixer
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
-
-        [DllImport("kernel32.dll")]
-        public static extern IntPtr GetModuleHandle(string lpModuleName);
 
         [DllImport("shell32.dll", SetLastError = true)]
         public static extern int Shell_NotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out RECT iconLocation);
@@ -2933,20 +2855,6 @@ namespace VolumeMixer
                 ShowNearTray(trayRect);
         }
 
-        public void CloseIfPointOutside(Win32.POINT pt)
-        {
-            if (!Visible || _warmingUp || _isClosing) return;
-            if (Bounds.Contains(new Point(pt.X, pt.Y))) return;
-            // The same mouse press also reaches NotifyIcon.MouseDown. Its toggle
-            // owns tray clicks, regardless of which queued callback arrives first.
-            if (_lastTrayRect.HasValue)
-            {
-                var tray = _lastTrayRect.Value;
-                if (pt.X >= tray.Left && pt.X < tray.Right && pt.Y >= tray.Top && pt.Y < tray.Bottom) return;
-            }
-            ScheduleDelayedClose();
-        }
-
         private const int SlideOffset = 14;
         private const double OpenDurationMs = 150.0;
         private const double CloseDurationMs = 120.0;
@@ -3743,17 +3651,9 @@ namespace VolumeMixer
         private int _lastBucket = -1;
         private AudioMaster _master;
 
-        // Low-level hook is armed only while the popup is visible or the pointer is
-        // over our icon. Keeping it installed globally during games is unnecessary.
-        private IntPtr _hookId;
-        private Win32.HookProc _hookProc; // keep ref alive (GC would collect a stack-only delegate)
-        private SynchronizationContext _uiCtx;
         private IntPtr _formHandle;
 
         private DateTime _lastTrayToggle = DateTime.MinValue;
-        private DateTime _lastNotifyIconMouseMove = DateTime.MinValue;
-        private Win32.POINT _lastNotifyIconMousePoint;
-        private volatile bool _popupVisible;
 
         public TrayApp()
         {
@@ -3775,28 +3675,11 @@ namespace VolumeMixer
                 Visible = true,
                 Text = Strings.VolumeMixer,
             };
-            _form.VisibleChanged += (s, e) =>
-            {
-                _popupVisible = _form.Visible;
-                RefreshMouseHookState();
-            };
-
             _icon.MouseDown += (s, e) =>
             {
                 if (e.Button != MouseButtons.Left) return;
                 TogglePopupFromTray();
             };
-            _icon.MouseMove += (s, e) =>
-            {
-                // Shell_NotifyIconGetRect can point at the overflow chevron while
-                // this icon is hidden. MouseMove is delivered only for our real icon,
-                // so remember it as proof before accepting a wheel event.
-                _lastNotifyIconMouseMove = DateTime.UtcNow;
-                Point cursor = Cursor.Position;
-                _lastNotifyIconMousePoint = new Win32.POINT { X = cursor.X, Y = cursor.Y };
-                InstallWheelHook();
-            };
-
             var menu = new ContextMenuStrip();
             menu.Items.Add(Strings.OpenMixer, null, (s, e) => _form.ShowNearTray(GetTrayIconRect()));
             menu.Items.Add(Strings.SoundSettings, null, (s, e) =>
@@ -3826,14 +3709,9 @@ namespace VolumeMixer
             _pollTimer.Tick += (s, e) =>
             {
                 UpdateTrayIcon();
-                RefreshMouseHookState();
             };
             _pollTimer.Start();
             UpdateTrayIcon();
-
-            // Capture UI synchronization context so the wheel hook callback (called
-            // on the hook thread) can marshal volume changes back to the UI thread.
-            _uiCtx = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
 
             // Listen for new audio sessions globally — when an app starts playing,
             // refresh the popup if it's open. Callback fires on a COM thread; the
@@ -3842,86 +3720,6 @@ namespace VolumeMixer
             {
                 if (_form != null) _form.OnExternalSessionChange();
             });
-        }
-
-        private void InstallWheelHook()
-        {
-            if (_hookId != IntPtr.Zero) return;
-            try
-            {
-                _hookProc = MouseHookCallback;
-                _hookId = Win32.SetWindowsHookEx(Win32.WH_MOUSE_LL, _hookProc,
-                    Win32.GetModuleHandle("user32"), 0);
-            }
-            catch { _hookId = IntPtr.Zero; }
-        }
-
-        private void UninstallWheelHook()
-        {
-            if (_hookId != IntPtr.Zero)
-            {
-                try { Win32.UnhookWindowsHookEx(_hookId); } catch { }
-                _hookId = IntPtr.Zero;
-            }
-        }
-
-        private void RefreshMouseHookState()
-        {
-            if (_popupVisible)
-            {
-                InstallWheelHook();
-                return;
-            }
-
-            if (IsForegroundFullscreenAppActive())
-            {
-                UninstallWheelHook();
-                return;
-            }
-
-            Point cursor = Cursor.Position;
-            bool nearLastConfirmedIconPoint = _lastNotifyIconMouseMove != DateTime.MinValue
-                && (DateTime.UtcNow - _lastNotifyIconMouseMove).TotalSeconds <= 60
-                && Math.Abs(cursor.X - _lastNotifyIconMousePoint.X) <= 16
-                && Math.Abs(cursor.Y - _lastNotifyIconMousePoint.Y) <= 16;
-
-            if (nearLastConfirmedIconPoint) InstallWheelHook();
-            else UninstallWheelHook();
-        }
-
-        private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
-        {
-            try
-            {
-                if (nCode >= 0)
-                {
-                    int msg = wParam.ToInt32();
-                    if (msg == Win32.WM_MOUSEWHEEL)
-                    {
-                        var data = (Win32.MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(Win32.MSLLHOOKSTRUCT));
-                        short delta = (short)((data.mouseData >> 16) & 0xFFFF);
-                        if (IsCursorOverTrayIcon(data.pt))
-                        {
-                            // Marshal to UI thread to mutate volume; do NOT block hook thread.
-                            int notches = delta / 120;
-                            if (notches != 0 && _uiCtx != null)
-                                _uiCtx.Post(_ => AdjustMasterVolume(notches), null);
-                            return new IntPtr(1); // mark handled, suppress further wheel processing
-                        }
-                    }
-                    else if (msg == Win32.WM_LBUTTONDOWN || msg == Win32.WM_RBUTTONDOWN || msg == Win32.WM_MBUTTONDOWN)
-                    {
-                        var data = (Win32.MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(Win32.MSLLHOOKSTRUCT));
-                        if (_popupVisible && _uiCtx != null)
-                        {
-                            var pt = data.pt;
-                            _uiCtx.Post(_ => _form.CloseIfPointOutside(pt), null);
-                        }
-                    }
-                }
-            }
-            catch { }
-            return Win32.CallNextHookEx(_hookId, nCode, wParam, lParam);
         }
 
         private void TogglePopupFromTray()
@@ -3938,20 +3736,6 @@ namespace VolumeMixer
                 _form.ToggleNearTray(GetTrayIconRect());
             }
             catch { }
-        }
-
-        private bool IsCursorOverTrayIcon(Win32.POINT pt)
-        {
-            if ((DateTime.UtcNow - _lastNotifyIconMouseMove).TotalSeconds > 60)
-                return false;
-            if (Math.Abs(pt.X - _lastNotifyIconMousePoint.X) > 12
-                || Math.Abs(pt.Y - _lastNotifyIconMousePoint.Y) > 12)
-                return false;
-
-            Win32.RECT rect;
-            if (!TryGetTrayIconRect(out rect)) return false;
-            return pt.X >= rect.Left && pt.X <= rect.Right
-                && pt.Y >= rect.Top && pt.Y <= rect.Bottom;
         }
 
         private Win32.RECT? GetTrayIconRect()
@@ -4022,57 +3806,6 @@ namespace VolumeMixer
                 return coversMonitor;
             }
             catch { return false; }
-        }
-
-        private void AdjustMasterVolume(int notches)
-        {
-            List<AudioMaster> masters = null;
-            AudioMaster retained = null;
-            try
-            {
-                // Always re-acquire — cached endpoints can go stale after output changes.
-                // Adjust every default render role because some apps use the communications
-                // endpoint while the tray tooltip is reading the multimedia endpoint.
-                masters = AudioEngine.GetDefaultRoleMasters();
-                if (masters == null || masters.Count == 0) return;
-
-                for (int i = 0; i < masters.Count; i++)
-                {
-                    var master = masters[i];
-                    if (master == null) continue;
-
-                    bool applied = master.TryStepVolume(notches);
-                    if (!applied)
-                    {
-                        float current;
-                        if (!master.TryGetVolume(out current)) continue;
-                        float step = 0.02f * notches; // 2% per wheel notch
-                        float next = Math.Max(0f, Math.Min(1f, current + step));
-                        if (!master.TrySetVolume(next)) continue;
-                        if (next > 0.001f)
-                        {
-                            bool muted;
-                            if (master.TryGetMute(out muted) && muted)
-                                master.TrySetMute(false);
-                        }
-                    }
-                }
-
-                retained = masters[0]; // keep tray tooltip on the primary multimedia endpoint
-                ReplaceTrayMaster(retained);
-                UpdateTrayIcon();
-            }
-            catch { ReplaceTrayMaster(null); }
-            finally
-            {
-                if (masters != null)
-                {
-                    foreach (var master in masters)
-                    {
-                        if (!ReferenceEquals(master, retained)) AudioEngine.ReleaseMaster(master);
-                    }
-                }
-            }
         }
 
         private void ReplaceTrayMaster(AudioMaster next)
@@ -4289,7 +4022,6 @@ namespace VolumeMixer
             if (disposing)
             {
                 AudioEngine.UnregisterSessionListener();
-                UninstallWheelHook();
                 ReplaceTrayMaster(null);
                 if (_pollTimer != null) _pollTimer.Dispose();
                 if (_icon != null) _icon.Dispose();

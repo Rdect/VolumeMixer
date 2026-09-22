@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Removed the process-wide low-level mouse hook used for tray-wheel volume.
+  Windows Defender classified the unsigned hook + auto-start combination as
+  `Trojan:Win32/Bearfoos.A!ml` and terminated/quarantined the application.
 - Fixed the settings/back buttons closing the popup when their focused controls
   were disposed during page navigation.
 - Fixed the x64 native property buffer size, preventing memory corruption when
